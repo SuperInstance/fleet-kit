@@ -30,6 +30,9 @@ dev = ["pytest>=7.0"]
 Homepage = "https://github.com/SuperInstance/fleet-kit"
 Repository = "https://github.com/SuperInstance/fleet-kit"
 
+[project.scripts]
+fleet-kit = "fleet_kit.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["fleet_kit", "fleet_kit.*"]
 
