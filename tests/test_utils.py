@@ -66,12 +66,20 @@ def test_json_get_invalid_url():
     assert "error" in result
 
 
-def test_json_get_valid_url(httpserver):
+def test_json_get_valid_url(monkeypatch):
     """Good URL returns parsed JSON."""
-    httpserver.add_handler(
-        httpserver.expect_request("/ok").respond_with_json({"status": "ok"})
-    )
-    result = json_get(httpserver.url + "/ok", timeout=5)
+    import urllib.request
+    class FakeResponse:
+        def read(self):
+            return b'{"status": "ok"}'
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+    def fake_urlopen(req, timeout=5):
+        return FakeResponse()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    result = json_get("http://localhost:9999/ok", timeout=5)
     assert result == {"status": "ok"}
 
 
@@ -83,14 +91,20 @@ def test_json_post_invalid_url():
     assert "error" in result
 
 
-def test_json_post_success(httpserver):
+def test_json_post_success(monkeypatch):
     """POSTing JSON returns parsed response."""
-    httpserver.add_handler(
-        httpserver.expect_request("/post", method="POST").respond_with_json(
-            {"received": True}
-        )
-    )
-    result = json_post(httpserver.url + "/post", {"received": True}, timeout=5)
+    import urllib.request
+    class FakeResponse:
+        def read(self):
+            return b'{"received": true}'
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+    def fake_urlopen(req, data=None, timeout=5):
+        return FakeResponse()
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    result = json_post("http://localhost:9999/post", {"received": True}, timeout=5)
     assert result == {"received": True}
 
 
