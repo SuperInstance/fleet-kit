@@ -41,6 +41,21 @@ pip install -e .
 | `indexer` | `generate_index` | Fleet INDEX.md generator — catalog services, dependencies |
 | `utils` | `load_key`, `sign_data` | Shared helpers — credential vault, HMAC, JSON ops |
 
+## Examples
+
+Real working examples in `examples/`:
+
+| File | Demonstrates |
+|------|-------------|
+| `examples/01_plato_basics.py` | PlatoClient — status, tile submission, room queries |
+| `examples/02_consensus_check.py` | HolonomyMatrix and zero-holonomy consensus check |
+| `examples/03_fleet_audit.py` | RepoAuditor — audit repos, score them, report issues |
+
+Run any example directly:
+```bash
+python examples/01_plato_basics.py
+```
+
 ## Architecture
 
 ```
