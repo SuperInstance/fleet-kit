@@ -1,0 +1,14 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dtolnay/rust-toolchain@stable@v4
+        with: { rust-version: stable }
+      - run: cargo test
+      - run: npm test
+      # The linter is a gate, not advice. It found a live defect tonight.
+      - name: fleetlint
+        run: python3 fleetlint.py SuperInstance/${{ github.event.repository.name }} --json
