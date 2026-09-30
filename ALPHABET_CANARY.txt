@@ -1,0 +1,10 @@
+The alphabet canary
+===================
+
+  0xE5C271EE5C13E9C7   FNV-1a 64 over the sorted canon opcodes joined by '|'
+
+The byte canary (0x024a555471370b18d) hashes a fixture STRING and has been applied in
+20+ repositories. It has never once been applied to the NAMES. That is how MERGER
+survived in the package that defines the canon.
+
+Pin it in CI and the day an opcode is renamed, the test fails the same day.
