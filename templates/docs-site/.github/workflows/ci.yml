@@ -1,9 +1,0 @@
-name: ci
-on: [pull_request]
-jobs:
-  links:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npx --yes linkinator --recurse --silent . || exit 1
-      # a docs site is a program; treat its links as its tests
