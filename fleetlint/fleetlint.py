@@ -22,7 +22,11 @@ from __future__ import annotations
 import json, os, re, subprocess, sys, urllib.request, urllib.error
 from dataclasses import dataclass, field
 
-CANARY = "0x024a555471370b18d"
+CANARY = "0x24a555471370b18d"          # 16 hex digits. Canonical.
+_CANARY_BAD = "0x024a555471370b18d"     # same integer, non-canonical TEXT.
+# A canary is compared as an integer, but its TEXT is part of the contract:
+# 17 digits with a leading zero is the same value and a different string, and a
+# grep for the canon will not match it. Rule L9 flags it.
 FNV_OFFSET, FNV_PRIME, MASK = 14695981039346656037, 1099511628211, (1 << 64) - 1
 
 def fnv1a_64(s: str) -> int:
@@ -270,6 +274,92 @@ SELF_TEST = [
     ("Buffer.from(h, 'utf8').toString('hex')", 0),
     ("'cafe \u0394'  // not a digest", 0),
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L9  canary-inert — a comparison that cannot fail.
+#     Found 7 times on 2026-10-02, five of them authored by the person who
+#     wrote this comment. The four ways, all observed:
+#       (a) a constant compared to a constant
+#       (b) the value never constructed, only asserted about
+#       (c) a control arm that scores like the real arms
+#       (d) a non-canonical canary string, so a grep for the canon cannot match
+#     A check that cannot fail is worse than no check: it converts absence of
+#     evidence into evidence of absence, permanently, and it does it silently.
+# ─────────────────────────────────────────────────────────────────────────────
+INERT_PATTERNS = [
+    (re.compile(r"assert\s+\w*canary\w*\s*==\s*\w*canary\w*", re.I),
+     "canary compared to another canary"),
+    (re.compile(r"assert\s+(?:0x[0-9a-fA-F]+)\s*==\s*(?:0x[0-9a-fA-F]+)\s*#", re.I),
+     "constant compared to constant, commented as a check"),
+    (re.compile(r"\boracle\b.*\btrust\b|\btrust\b.*\boracle\b", re.I),
+     "an instrument that trusts its own output"),
+]
+
+def check_canary_inert(repo, ref, token):
+    """L9. Flags a non-canonical canary string, and a comparison that cannot fail."""
+    out = []
+    for path in _walk(repo, ref, token):
+        body = get_text(repo, path, ref, token)
+        if body is None:
+            continue
+        if _CANARY_BAD in body:
+            out.append(Finding("L9", "high", f"{repo}/{path}",
+                "canary written non-canonically (0x024a... vs 0x24a...): same "
+                "integer, different string, and a grep for the canon will not match"))
+        for rx, why in INERT_PATTERNS:
+            m = rx.search(body)
+            if m:
+                ln = body[:m.start()].count("\n") + 1
+                out.append(Finding("L9", "high", f"{repo}/{path}:{ln}", f"inert check: {why}"))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L10 narrative-count — prose asserting a number the artifact does not contain.
+#     A commit claiming 441 recovered files that contained one. Prose has no
+#     check on it at all, which is why it is the worst substrate of the ten
+#     observed failures: the metric can at least be pointed at.
+# ─────────────────────────────────────────────────────────────────────────────
+COUNT_CLAIM = re.compile(
+    r"\b(\d[\d,]{1,12})\s+(?:\S+\s+){0,3}?"
+    r"(files?|positions?|repos?|tests?|checks?|commits?|entries?)\b", re.I)
+COUNT_DIGITS = re.compile(r"\d[\d,]*")
+
+def _count(s: str) -> int:
+    """Digits only. A count that reads the wrong digits is worse than none."""
+    return int(COUNT_DIGITS.match(s).group(0).replace(",", ""))
+COUNT_NEARBY = re.compile(
+    r"\b(recovered|restored|reclaimed|archived|committed|pushed|total)\b", re.I)
+
+def check_narrative_count(repo, ref, token):
+    """L10. A commit message that claims a count larger than the commit contains."""
+    out = []
+    try:
+        raw = api(f"/repos/{repo}/commits?per_page=30", token)
+    except Exception:
+        return out
+    if not isinstance(raw, list):
+        return out
+    for c in raw:
+        msg = (c.get("commit", {}).get("message") or "")
+        n_claim = COUNT_NEARBY.search(msg)
+        if not n_claim:
+            continue
+        for m in COUNT_CLAIM.finditer(msg):
+            claimed = _count(m.group(1))
+            if claimed < 10:
+                continue
+            # count what the commit ACTUALLY touches
+            detail = api(f"/repos/{repo}/commits/{c['sha']}", token)
+            files = len(detail.get("files") or [])
+            if files and claimed > files * 2:
+                out.append(Finding("L10", "high",
+                    f"{repo}@{c['sha'][:7]}",
+                    f"commit message claims {claimed} {m.group(2)}; the commit "
+                    f"contains {files}. Prose asserting a count the artifact lacks"))
+    return out
+
+
 def self_test():
     bad = []
     for src, want in SELF_TEST:
@@ -288,7 +378,16 @@ class LintHarnessBroken(RuntimeError):
 
 
 def lint_repo(full, token):
-    meta = api(f"/repos/{full}", token)
+    try:
+        meta = api(f"/repos/{full}", token)
+    except urllib.error.HTTPError as e:
+        # SHAPE, not a finding. An unresolvable repo is a BROKEN INSTRUMENT,
+        # and a broken instrument must never be reported as clean.
+        raise LintHarnessBroken(f"{full}: HTTP {e.code} on repo lookup")
+    except urllib.error.URLError as e:
+        # LOAD, not SHAPE: the request never got an answer.
+        raise LintHarnessBroken(f"{full}: transport {e.reason} (LOAD)")
+    
     ref = meta.get("default_branch", "main")
     findings, failed = [], []
     for name, fn in CHECKS:
