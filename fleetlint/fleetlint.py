@@ -360,6 +360,61 @@ def check_narrative_count(repo, ref, token):
     return out
 
 
+
+# ── helpers the L9 rule called but nobody defined ─────────────────────────────
+def _tree(repo, ref, token):
+    """Recursive tree listing. RAISES on a truncated listing rather than reading
+    it as clean - a partial listing that returns zero findings is the same lie as
+    a check that cannot fail, one level up."""
+    r = api(f"/repos/{repo}/git/trees/{ref}?recursive=1", token)
+    if r.get("truncated"):
+        raise LintHarnessBroken(
+            f"{repo}: git tree listing is TRUNCATED at {len(r.get('tree', []))} entries; "
+            "a partial listing reads as clean and is not")
+    return [x["path"] for x in r.get("tree", []) if x["type"] == "blob"]
+
+
+def _is_texty(path):
+    return path.endswith((".py", ".js", ".mjs", ".ts", ".rs", ".md", ".json", ".yml", ".yaml"))
+
+
+def _walk(repo, ref, token):
+    """Defined because check_canary_inert (L9) called it and it did not exist.
+    That defect shipped in e06f00a and the controls passed anyway, because they
+    call the regexes directly and never the registered pipeline."""
+    return [p for p in _tree(repo, ref, token) if _is_texty(p)][:120]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L11  unwitnessed-receipt — a receipt with nothing that lets a reader check it.
+#     Grounded in SuperInstance/quilt-atlas seed-dna.json: of 90 records, 61
+#     mention `receipt`; 33 of those 61 carry NO chain or replay witness. The
+#     failure is the MAJORITY case of the token, not an edge case.
+#     A token with no witness is not a pattern, it is a word.
+# ─────────────────────────────────────────────────────────────────────────────
+RECEIPT_RE = re.compile(r"\breceipts?\b", re.I)
+WITNESS_RE = re.compile(r"\bchain\b|\breplay\b|\bprev\b|\btip\b|\bancestr", re.I)
+
+
+def check_unwitnessed_receipt(repo, ref, token):
+    """L11. Flags a repo that holds receipts and no chain/replay witness."""
+    out = []
+    hits = 0
+    for path in _walk(repo, ref, token):
+        body = get_text(repo, path, ref, token)
+        if body is None:
+            continue
+        if RECEIPT_RE.search(body):
+            hits += 1
+            if not WITNESS_RE.search(body):
+                ln = body[:RECEIPT_RE.search(body).start()].count("\n") + 1
+                out.append(Finding("L11", "high", f"{path}:{ln}",
+                    "repo holds receipts but no chain/replay witness anywhere: "
+                    "the record asserts that something ran and cannot be checked"))
+    if hits and not out:
+        pass          # receipts present AND a witness present -> clean
+    return out
+
 def self_test():
     bad = []
     for src, want in SELF_TEST:
@@ -369,12 +424,20 @@ def self_test():
     return bad
 
 
-CHECKS = [("L1", check_dead_exports), ("L2/L3/L4/L5", check_metadata),
-          ("L6", check_digests), ("L7", check_fixture_trap), ("L8", check_tests)]
+
 
 class LintHarnessBroken(RuntimeError):
     """A check that could not run is NOT a finding. It is a broken instrument, and a
     broken instrument must never be reported as 'clean'."""
+
+
+# CHECKS IS MODULE-LEVEL ON PURPOSE. It was function-local, which meant the
+# question "is this rule registered?" could not be asked of the module at all -
+# a registration control is impossible against a registration list nobody can read.
+CHECKS = [("L1", check_dead_exports), ("L2/L3/L4/L5", check_metadata),
+            ("L6", check_digests), ("L7", check_fixture_trap), ("L8", check_tests),
+            ("L9", check_canary_inert), ("L10", check_narrative_count),
+            ("L11", check_unwitnessed_receipt)]
 
 
 def lint_repo(full, token):
